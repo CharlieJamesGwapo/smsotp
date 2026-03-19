@@ -154,12 +154,14 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header, excep
 | DELETE | /api/templates/:id    | Delete template   |
 
 ### Messages
-| Method | Endpoint               | Description                    |
-|--------|------------------------|--------------------------------|
-| POST   | /api/messages/send     | Send SMS now                   |
-| POST   | /api/messages/schedule | Schedule SMS for later         |
-| GET    | /api/messages          | Message history with filters   |
-| GET    | /api/messages/:id      | Single message detail          |
+| Method | Endpoint               | Description                         |
+|--------|------------------------|-------------------------------------|
+| POST   | /api/messages/send     | Send SMS now                        |
+| POST   | /api/messages/schedule | Schedule SMS for later              |
+| GET    | /api/messages          | Message history with filters        |
+| GET    | /api/messages/:id      | Single message detail               |
+| DELETE | /api/messages/:id      | Cancel a pending scheduled message  |
+| POST   | /api/messages/:id/retry| Retry a failed message              |
 
 ### Dashboard
 | Method | Endpoint              | Description                         |
@@ -257,6 +259,14 @@ smsotp/
 
 Settings stored in SQLite `settings` table (key-value):
 
+### settings
+| Column | Type | Notes               |
+|--------|------|---------------------|
+| key    | TEXT | PRIMARY KEY, NOT NULL|
+| value  | TEXT | NOT NULL, DEFAULT '' |
+
+### Default settings values
+
 | Key                    | Default               | Description                    |
 |------------------------|-----------------------|--------------------------------|
 | phone_gateway_url      | http://192.168.100.165:8080 | Android phone gateway URL |
@@ -264,4 +274,104 @@ Settings stored in SQLite `settings` table (key-value):
 | semaphore_enabled      | false                 | Enable Semaphore fallback      |
 | semaphore_sender_name  | (empty)               | Semaphore sender name          |
 | sms_delay_ms           | 1000                  | Delay between SMS in ms        |
-| admin_username         | admin                 | Default admin username         |
+
+## Phone Number Format
+
+All PH numbers are stored in the format `09XXXXXXXXX` (11 digits). Accepted input formats that get normalized on save:
+- `09171234567` → stored as-is
+- `+639171234567` → converted to `09171234567`
+- `639171234567` → converted to `09171234567`
+
+The Android phone gateway receives numbers in `09XX` format. Semaphore API receives numbers in `09XX` format as well (Semaphore handles PH numbers natively).
+
+## Android Phone Gateway API
+
+The phone gateway is an Android app (e.g., "SMS Gateway" or similar) running on the user's phone. Expected contract:
+
+**Request:** `POST http://<phone-ip>:8080/send-sms`
+```json
+{ "phone": "09171234567", "message": "Hello!" }
+```
+
+**Response (success):** HTTP 200
+```json
+{ "status": "sent" }
+```
+
+**Response (failure):** HTTP 4xx/5xx or connection timeout.
+
+## Template Variables
+
+Templates use `{variable}` syntax. Available variables are derived from contact fields:
+- `{name}` — contact's name
+- `{phone}` — contact's phone number
+- `{email}` — contact's email (empty string if null)
+
+Custom variables can also be passed at send time via the API. If a variable is unresolved (no matching contact field or custom value), it is left as the literal `{variable}` string so the admin can spot it in the preview step.
+
+## API Request/Response Schemas
+
+### POST /api/messages/send
+```json
+{
+  "contact_ids": [1, 2, 3],
+  "group_ids": [1],
+  "template_id": 1,
+  "body": "Custom message if no template",
+  "variables": { "code": "123456" }
+}
+```
+Either `template_id` or `body` is required (not both). `contact_ids` and `group_ids` can both be provided — recipients are merged and deduplicated.
+
+### POST /api/messages/schedule
+Same as `/send` plus:
+```json
+{ "scheduled_at": "2026-03-20T09:00:00Z", "...same fields as send" }
+```
+
+### DELETE /api/messages/:id
+Cancels a pending scheduled message. Only works if `status = "pending"`. Returns 400 if message is already sent.
+
+### POST /api/messages/:id/retry
+Retries a failed message through the sending flow. Only works if `status = "failed"`.
+
+### POST /api/contacts/import
+Multipart form upload. CSV file with header row required:
+```
+name,phone,email,notes
+Juan Dela Cruz,09171234567,juan@email.com,VIP client
+```
+Duplicate phone numbers are skipped (existing contact kept). Max file size: 1MB.
+
+### POST /api/groups/:id/members
+```json
+{ "contact_ids": [1, 2, 3] }
+```
+
+### DELETE /api/groups/:id/members
+```json
+{ "contact_ids": [1, 2] }
+```
+
+## Error Handling & Retries
+
+- **Gateway timeout:** 10 seconds per HTTP call to either gateway
+- **Failure conditions:** HTTP timeout, non-200 status code, network unreachable
+- **Batch gateway check:** Before sending a batch, a health-check ping is sent to the Android gateway. If unreachable and Semaphore is disabled, the batch is aborted with an error message to the admin (no partial sends).
+- **Manual retry:** Failed messages can be retried via `POST /api/messages/:id/retry`
+- **No automatic retries** — keeps behavior predictable for the admin
+
+## First Run / Admin Bootstrap
+
+On first startup, if the `admin` table is empty, the system seeds a default admin account:
+- **Username:** `admin`
+- **Password:** `admin123`
+
+The admin should change the password immediately via the Settings page. The UI shows a warning banner until the default password is changed.
+
+## Auth Token Handling
+
+- JWT tokens expire after 24 hours
+- No server-side token refresh endpoint needed (stateless JWT)
+- Frontend intercepts 401 responses and redirects to the login page
+- No server-side logout — the frontend simply discards the token
