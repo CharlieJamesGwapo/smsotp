@@ -66,6 +66,12 @@ Single Go binary serves both the REST API and the embedded React frontend.
 | password_hash | TEXT    | NOT NULL (bcrypt)   |
 | created_at    | DATETIME| DEFAULT CURRENT_TIMESTAMP |
 
+### settings
+| Column | Type | Notes               |
+|--------|------|---------------------|
+| key    | TEXT | PRIMARY KEY, NOT NULL|
+| value  | TEXT | NOT NULL, DEFAULT '' |
+
 ### contacts
 | Column     | Type    | Notes               |
 |------------|---------|---------------------|
@@ -75,6 +81,7 @@ Single Go binary serves both the REST API and the embedded React frontend.
 | email      | TEXT    | nullable            |
 | notes      | TEXT    | nullable            |
 | created_at | DATETIME| DEFAULT CURRENT_TIMESTAMP |
+| updated_at | DATETIME| DEFAULT CURRENT_TIMESTAMP |
 
 ### groups
 | Column      | Type    | Notes               |
@@ -83,6 +90,7 @@ Single Go binary serves both the REST API and the embedded React frontend.
 | name        | TEXT    | NOT NULL, UNIQUE    |
 | description | TEXT    | nullable            |
 | created_at  | DATETIME| DEFAULT CURRENT_TIMESTAMP |
+| updated_at  | DATETIME| DEFAULT CURRENT_TIMESTAMP |
 
 ### contact_groups (join table)
 | Column     | Type    | Notes                          |
@@ -98,6 +106,7 @@ Single Go binary serves both the REST API and the embedded React frontend.
 | name       | TEXT    | NOT NULL            |
 | body       | TEXT    | NOT NULL            |
 | created_at | DATETIME| DEFAULT CURRENT_TIMESTAMP |
+| updated_at | DATETIME| DEFAULT CURRENT_TIMESTAMP |
 
 Template variables use `{variable}` syntax in the body, e.g., `"Hi {name}, your OTP is {code}"`.
 
@@ -120,11 +129,22 @@ Template variables use `{variable}` syntax in the body, e.g., `"Hi {name}, your 
 
 All endpoints require JWT token in `Authorization: Bearer <token>` header, except `/api/auth/login`.
 
+### Pagination
+
+All list endpoints (`GET /api/contacts`, `GET /api/messages`, `GET /api/templates`, `GET /api/groups`) support pagination:
+- Query params: `?page=1&per_page=20&search=keyword`
+- Response envelope:
+```json
+{ "data": [...], "total": 85, "page": 1, "per_page": 20 }
+```
+Default: `page=1`, `per_page=20`.
+
 ### Auth
-| Method | Endpoint          | Description            |
-|--------|-------------------|------------------------|
-| POST   | /api/auth/login   | Login, returns JWT     |
-| GET    | /api/auth/me      | Get current admin info |
+| Method | Endpoint              | Description              |
+|--------|-----------------------|--------------------------|
+| POST   | /api/auth/login       | Login, returns JWT       |
+| GET    | /api/auth/me          | Get current admin info   |
+| PUT    | /api/auth/password    | Change admin password    |
 
 ### Contacts
 | Method | Endpoint              | Description                  |
@@ -139,6 +159,7 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header, excep
 | Method | Endpoint                    | Description              |
 |--------|-----------------------------|--------------------------|
 | GET    | /api/groups                 | List all groups          |
+| GET    | /api/groups/:id             | Get group with members   |
 | POST   | /api/groups                 | Create group             |
 | PUT    | /api/groups/:id             | Update group             |
 | DELETE | /api/groups/:id             | Delete group             |
@@ -189,6 +210,10 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header, excep
 
 **UI:** Sidebar navigation, desktop-focused, Tailwind CSS, responsive but optimized for desktop.
 
+### SMS Character Counter
+
+The Send SMS and Template editor pages display a live character counter. Standard SMS is 160 characters (70 for Unicode/special characters). Messages over the limit are sent as-is (the gateway handles multipart splitting). The UI shows a warning: e.g., "245 chars (2 SMS parts)" so the admin knows the cost implication.
+
 ## SMS Sending Flow
 
 1. User selects recipients (individual contacts and/or groups) and composes message (custom or from template)
@@ -204,6 +229,7 @@ All endpoints require JWT token in `Authorization: Bearer <token>` header, excep
 
 ### Scheduled Messages
 
+- When a message is scheduled, fan-out happens immediately — groups are expanded and deduplicated at schedule time, creating one `messages` row per recipient with `status = "pending"` and the `scheduled_at` timestamp. This locks in the recipient list at the moment of scheduling.
 - Background goroutine runs every 60 seconds
 - Queries messages where `scheduled_at <= now AND status = 'pending'`
 - Sends through the same flow above
@@ -257,13 +283,7 @@ smsotp/
 
 ## Configuration
 
-Settings stored in SQLite `settings` table (key-value):
-
-### settings
-| Column | Type | Notes               |
-|--------|------|---------------------|
-| key    | TEXT | PRIMARY KEY, NOT NULL|
-| value  | TEXT | NOT NULL, DEFAULT '' |
+Settings stored in the `settings` table (see Database Schema section). Default values seeded on first run:
 
 ### Default settings values
 
@@ -352,6 +372,12 @@ Duplicate phone numbers are skipped (existing contact kept). Max file size: 1MB.
 ```json
 { "contact_ids": [1, 2] }
 ```
+
+### PUT /api/auth/password
+```json
+{ "current_password": "admin123", "new_password": "newSecurePass!" }
+```
+Returns 400 if `current_password` is incorrect.
 
 ## Error Handling & Retries
 
