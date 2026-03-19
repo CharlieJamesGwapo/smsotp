@@ -1,0 +1,11 @@
+sms-server
+sms.db
+*.db
+web/node_modules/
+web/dist/
+venv/
+__pycache__/
+sms.db-shm
+sms.db-wal
+config.bat
+node_modules

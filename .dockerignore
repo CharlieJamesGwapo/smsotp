@@ -1,0 +1,9 @@
+web/
+web/node_modules/
+web/dist/
+*.db
+sms-server
+.git
+docs/
+venv/
+sms.py
