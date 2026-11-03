@@ -2,8 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -13,7 +17,25 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = []byte("smsotp-secret-change-me-in-production")
+// jwtSecret signs login tokens. Set JWT_SECRET in production; without it a random
+// secret is used, so everyone has to log in again after a restart.
+var jwtSecret = loadJWTSecret()
+
+func loadJWTSecret() []byte {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return []byte(s)
+	}
+	log.Println("JWT_SECRET is not set; using a random secret (logins reset on restart)")
+	return []byte(randomString(32))
+}
+
+func randomString(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("crypto/rand failed: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b)[:n]
+}
 
 type contextKey string
 
@@ -45,11 +67,18 @@ func EnsureAdmin() {
 	var count int
 	database.DB.QueryRow("SELECT COUNT(*) FROM admin").Scan(&count)
 	if count == 0 {
-		hash, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		// First run: use ADMIN_PASSWORD, or generate one and print it once.
+		password := os.Getenv("ADMIN_PASSWORD")
+		if password == "" {
+			password = randomString(16)
+			log.Printf("Created admin account. Username: admin  Password: %s  (change it in Settings)", password)
+		}
+		hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		database.DB.Exec("INSERT INTO admin (username, password_hash) VALUES (?, ?)", "admin", string(hash))
 	}
 }
 
+// isDefaultPassword flags accounts created by older versions with the old fixed password.
 func isDefaultPassword(hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte("admin123")) == nil
 }
