@@ -103,6 +103,5 @@ func main() {
 	}
 
 	log.Printf("SMS Notification System running on port %s", port)
-	log.Println("Default login: admin / admin123")
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
