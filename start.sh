@@ -18,7 +18,7 @@ go build -o sms-server .
 # Start the server
 echo ""
 echo "Starting SMS server on http://localhost:8080"
-echo "Login: admin / admin123"
+echo "Login: admin (password from ADMIN_PASSWORD, or printed in the server log on first run)"
 echo ""
 ./sms-server &
 SERVER_PID=$!
